@@ -93,13 +93,9 @@ class WordAnnouncer(QWidget):
         self.tts_thread = None
         self.current_word_index = -1
         self.total_words = 0
+        self.tts_engine = 'edge'  # 可选 'edge' 或 'pyttsx3'
         pygame.mixer.init()  # 初始化pygame音频
         pygame.mixer.music.set_volume(1.0)  # 设置最大音量
-        # 讯飞TTS参数
-        self.XF_APPID = 'd4fb74cd'
-        self.XF_APIKEY = '6000a769bd7ffede2bd17882d6529f31'
-        self.XF_APISECRET = 'N2UxZDhkN2FlZWM3MmE2ZTBlOThlMjE2'  # 用户提供的APISecret
-        self.XF_TTS_URL = 'wss://tts-api.xfyun.cn/v2/tts'
         # Excel相关
         self.lesson_words = {}  # 课名 -> 词语列表
         self.excel_loaded = False
@@ -132,6 +128,19 @@ class WordAnnouncer(QWidget):
         self.countdown = CircularCountdownWidget()
         self.countdown.show()
         layout = QVBoxLayout()
+
+        # 选择TTS引擎
+        tts_layout = QHBoxLayout()
+        tts_label = QLabel("选择语音播报引擎:")
+        self.tts_combo = QComboBox()
+        self.tts_combo.addItem("Edge-TTS(免费,联网)", 'edge')
+        self.tts_combo.addItem("pyttsx3(免费,离线)", 'pyttsx3')
+        self.tts_combo.setCurrentIndex(0)
+        self.tts_combo.currentIndexChanged.connect(self.on_tts_selected)
+        tts_layout.addWidget(tts_label)
+        tts_layout.addWidget(self.tts_combo)
+        tts_layout.addStretch(1)
+        layout.addLayout(tts_layout)
 
         # 选择Excel文件按钮
         file_layout = QHBoxLayout()
@@ -319,88 +328,75 @@ class WordAnnouncer(QWidget):
         self.update_progress_label()
 
     def say_text(self, text):
-        """使用科大讯飞TTS新版WebSocket接口合成并播放语音"""
+        """根据 tts_engine 选择 TTS 服务"""
+        if self.tts_engine == 'edge':
+            self._say_text_edge(text)
+        elif self.tts_engine == 'pyttsx3':
+            self._say_text_pyttsx3(text)
+        else:
+            print("未知TTS引擎")
+
+    def _say_text_edge(self, text):
+        """使用 edge-tts 合成并播放语音"""
         def tts_and_play():
             try:
-                import time
-                import hmac
-                from urllib.parse import quote_plus
-                import threading
-                import json
-                import base64
-                import websocket
-                import ssl
-                # 讯飞WebSocket签名
-                def assemble_auth_url(host, api_key, api_secret):
-                    now = int(time.time())
-                    date = time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime(now))
-                    signature_origin = f"host: {host}\ndate: {date}\nGET /v2/tts HTTP/1.1"
-                    signature_sha = hmac.new(api_secret.encode('utf-8'), signature_origin.encode('utf-8'), hashlib.sha256).digest()
-                    signature_sha_base64 = base64.b64encode(signature_sha).decode('utf-8')
-                    authorization_origin = f'api_key="{api_key}", algorithm="hmac-sha256", headers="host date request-line", signature="{signature_sha_base64}"'
-                    authorization = base64.b64encode(authorization_origin.encode('utf-8')).decode('utf-8')
-                    url = f"wss://tts-api.xfyun.cn/v2/tts?authorization={authorization}&date={quote_plus(date)}&host=tts-api.xfyun.cn"
-                    return url
-                # 组装URL
-                ws_url = assemble_auth_url('tts-api.xfyun.cn', self.XF_APIKEY, self.XF_APISECRET)
-                # 音频数据收集
-                audio_chunks = []
-                def on_message(ws, message):
-                    msg = json.loads(message)
-                    if msg['code'] != 0:
-                        print('讯飞TTS错误:', msg['message'])
-                        ws.close()
-                        return
-                    audio = msg['data']['audio']
-                    audio_bytes = base64.b64decode(audio)
-                    audio_chunks.append(audio_bytes)
-                    if msg['data']['status'] == 2:
-                        ws.close()
-                def on_error(ws, error):
-                    print('讯飞TTS异常:', error)
-                def on_close(ws, close_status_code, close_msg):
+                import asyncio
+                import edge_tts
+                mp3_path = f"_edge_tts_{uuid.uuid4().hex}.mp3"
+                rate = "-30%"  # 语速调慢，越负越慢，可根据需要调整
+                async def run():
+                    communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate=rate)
+                    await communicate.save(mp3_path)
+                asyncio.run(run())
+                pygame.mixer.music.load(mp3_path)
+                pygame.mixer.music.play()
+                while pygame.mixer.music.get_busy():
+                    pygame.time.Clock().tick(10)
+                pygame.mixer.music.unload()
+                try:
+                    os.remove(mp3_path)
+                except:
                     pass
-                def on_open(ws):
-                    data = {
-                        "common": {"app_id": self.XF_APPID},
-                        "business": {
-                            "aue": "lame",
-                            "sfl": 1,
-                            "vcn": "x4_putongnvqingnian_talk",
-                            "pitch": 50,
-                            "speed": 50,
-                            "volume": 80,
-                            "tte": "utf8"
-                        },
-                        "data": {"status": 2, "text": base64.b64encode(text.encode('utf-8')).decode('utf-8')}
-                    }
-                    ws.send(json.dumps(data))
-                ws = websocket.WebSocketApp(ws_url,
-                                            on_message=on_message,
-                                            on_error=on_error,
-                                            on_close=on_close,
-                                            on_open=on_open)
-                ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-                # 合成音频
-                if audio_chunks:
-                    mp3_path = f"_xfyun_ws_tts_{uuid.uuid4().hex}.mp3"
-                    audio = b''.join(audio_chunks)
-                    with open(mp3_path, 'wb') as f:
-                        f.write(audio)
-                    pygame.mixer.music.load(mp3_path)
-                    pygame.mixer.music.play()
-                    while pygame.mixer.music.get_busy():
-                        pygame.time.Clock().tick(10)
-                    pygame.mixer.music.unload()
-                    try:
-                        os.remove(mp3_path)
-                    except:
-                        pass
             except Exception as e:
-                print(f"讯飞TTS异常: {str(e)}")
+                print(f"edge-tts异常: {str(e)}")
         self.tts_thread = threading.Thread(target=tts_and_play)
         self.tts_thread.start()
-    
+
+    def _say_text_pyttsx3(self, text):
+        """使用 pyttsx3 (离线) 合成并播放语音"""
+        def tts_and_play():
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                # 自动选择中文语音（Windows 下通常有 Microsoft Huihui/Microsoft Xiaoxiao）
+                voices = engine.getProperty('voices')
+                for v in voices:
+                    # 兼容不同 pyttsx3 版本和平台
+                    lang = ''
+                    if hasattr(v, 'languages') and v.languages:
+                        # 有些 pyttsx3 版本是 bytes，有些是 str
+                        try:
+                            lang = v.languages[0]
+                            if isinstance(lang, bytes):
+                                lang = lang.decode('utf-8', errors='ignore')
+                        except Exception:
+                            lang = ''
+                    if ('zh' in lang.lower()) or ('chinese' in v.name.lower()):
+                        engine.setProperty('voice', v.id)
+                        break
+                # 设置语速，数值越小越慢，100~150较为自然
+                engine.setProperty('rate', 130)  # 语速可调，推荐130左右
+                engine.setProperty('volume', 1.0)
+                engine.say(text)
+                engine.runAndWait()
+                engine.stop()
+            except ImportError:
+                print("未安装 pyttsx3，请先运行: pip install pyttsx3")
+            except Exception as e:
+                print(f"pyttsx3异常: {str(e)}")
+        self.tts_thread = threading.Thread(target=tts_and_play)
+        self.tts_thread.start()
+
     def _start_countdown_mainthread(self, interval):
         finished = getattr(self, '_countdown_finished_event', None)
         def on_countdown_finished():
@@ -485,6 +481,9 @@ class WordAnnouncer(QWidget):
     def update_progress_label(self):
         current = self.current_word_index + 1 if self.current_word_index >= 0 else 0
         self.progress_label.setText(f"当前词语：{current}/{self.total_words}")
+
+    def on_tts_selected(self, idx):
+        self.tts_engine = self.tts_combo.currentData()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
