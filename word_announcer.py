@@ -5,23 +5,16 @@ import re
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit, QComboBox, QFileDialog
 )
-from PySide6.QtGui import QIcon, QTextCursor, QTextCharFormat, QColor, QFont, QPainter, QPen, QBrush
+from PySide6.QtGui import QIcon, QTextCursor, QTextCharFormat, QColor, QFont, QPainter, QPen
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt, QTimer, Signal, QBuffer, QByteArray, QIODevice
 import pygame
 import os
 import uuid
-import requests
-from io import BytesIO
-from PIL import Image, ImageDraw
-import hashlib
+from PIL import Image
 import base64
-import json
-import websocket
-import ssl
 import pandas as pd
 import qdarkstyle
-import math
 from PySide6.QtGui import QImageReader
 
 def ensure_ico_from_png(png_path, ico_path, size=(256, 256)):

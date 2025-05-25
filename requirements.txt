@@ -1,1 +1,9 @@
-wxPython==4.2.1 
+PySide6
+pygame
+requests
+Pillow
+websocket-client
+pandas
+qdarkstyle
+edge-tts
+pyttsx3 
