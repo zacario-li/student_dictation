@@ -3,7 +3,7 @@ import threading
 import time
 import re
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit, QComboBox, QFileDialog
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit, QComboBox, QFileDialog, QSlider
 )
 from PySide6.QtGui import QIcon, QTextCursor, QTextCharFormat, QColor, QFont, QPainter, QPen
 from PySide6.QtGui import QPixmap
@@ -187,6 +187,23 @@ class WordAnnouncer(QWidget):
         interval_row.addStretch(1)
         layout.addLayout(interval_row)
 
+        # 字体大小调节
+        font_size_row = QHBoxLayout()
+        font_size_label = QLabel("文字大小:")
+        self.font_size_slider = QSlider(Qt.Horizontal)
+        self.font_size_slider.setMinimum(10)
+        self.font_size_slider.setMaximum(36)
+        self.font_size_slider.setValue(28)  # 默认14px
+        self.font_size_slider.setTickPosition(QSlider.TicksBelow)
+        self.font_size_slider.setTickInterval(4)
+        self.font_size_value_label = QLabel("28px")
+        self.font_size_slider.valueChanged.connect(self.on_font_size_changed)
+        font_size_row.addWidget(font_size_label)
+        font_size_row.addWidget(self.font_size_slider)
+        font_size_row.addWidget(self.font_size_value_label)
+        font_size_row.addStretch(1)
+        layout.addLayout(font_size_row)
+
         # 词语输入
         words_label_layout = QHBoxLayout()
         self.words_label = QLabel("请输入要播报的词组(每行一个，或用空格分隔):")
@@ -197,6 +214,13 @@ class WordAnnouncer(QWidget):
         layout.addLayout(words_label_layout)
 
         self.text_area = QTextEdit()
+        # 设置文本区域的初始字体为正楷体
+        font = self.text_area.font()
+        font.setFamily("楷体")
+        font.setPointSize(28)  # 与滑动条默认值保持一致
+        self.text_area.setFont(font)
+        # 应用初始样式
+        self.update_text_area_style(28)
         layout.addWidget(self.text_area)
 
         # 按钮
@@ -501,6 +525,32 @@ class WordAnnouncer(QWidget):
 
     def on_tts_selected(self, idx):
         self.tts_engine = self.tts_combo.currentData()
+
+    def on_font_size_changed(self, value):
+        """字体大小滑动条变化时的处理函数"""
+        self.font_size_value_label.setText(f"{value}px")
+        # 更新文本区域的字体大小
+        font = self.text_area.font()
+        font.setFamily("楷体")  # 设置为正楷体
+        font.setPointSize(value)
+        self.text_area.setFont(font)
+        # 更新样式表中的字体大小
+        self.update_text_area_style(value)
+
+    def update_text_area_style(self, font_size):
+        """更新文本区域的样式"""
+        self.text_area.setStyleSheet(f"""
+            QTextEdit {{
+                border: 1px solid #cccccc;
+                border-radius: 6px;
+                padding: 4px;
+                background: #ffffff;
+                font-size: {font_size}px;
+                color: #222222;
+                font-family: "楷体", "KaiTi", "STKaiti", serif;
+                line-height: 1.5;
+            }}
+        """)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)  # 必须先创建 QApplication
