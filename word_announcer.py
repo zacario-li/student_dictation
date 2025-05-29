@@ -16,6 +16,9 @@ import base64
 import pandas as pd
 import qdarkstyle
 from PySide6.QtGui import QImageReader
+import sounddevice as sd
+import soundfile as sf
+import io
 
 def ensure_ico_from_png(png_path, ico_path, size=(256, 256)):
     """如果ico文件不存在，则从png生成指定尺寸的ico文件"""
@@ -388,7 +391,8 @@ class WordAnnouncer(QWidget):
     def say_text(self, text):
         """根据 tts_engine 选择 TTS 服务"""
         if self.tts_engine == 'edge':
-            self._say_text_edge(text)
+            # self._say_text_edge(text)
+            self._say_text_edge_direct(text)
         elif self.tts_engine == 'pyttsx3':
             self._say_text_pyttsx3(text)
         else:
@@ -417,6 +421,36 @@ class WordAnnouncer(QWidget):
                     pass
             except Exception as e:
                 print(f"edge-tts异常: {str(e)}")
+        self.tts_thread = threading.Thread(target=tts_and_play)
+        self.tts_thread.start()
+
+    def _say_text_edge_direct(self, text):
+        """直接播放音频数据"""
+        def tts_and_play():
+            try:
+                import asyncio
+                import edge_tts
+                
+                async def run():
+                    communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="-30%")
+                    
+                    audio_data = b""
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            audio_data += chunk["data"]
+                    
+                    # 使用soundfile读取音频数据
+                    audio_io = io.BytesIO(audio_data)
+                    data, samplerate = sf.read(audio_io)
+                    
+                    # 直接播放
+                    sd.play(data, samplerate)
+                    sd.wait()  # 等待播放完成
+                
+                asyncio.run(run())
+            except Exception as e:
+                print(f"edge-tts异常: {str(e)}")
+        
         self.tts_thread = threading.Thread(target=tts_and_play)
         self.tts_thread.start()
 
