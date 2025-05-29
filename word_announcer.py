@@ -179,13 +179,22 @@ class WordAnnouncer(QWidget):
 
         # 间隔设置和倒计时进度条同一行
         interval_row = QHBoxLayout()
-        interval_label = QLabel("播报间隔(秒):")
+        interval_label = QLabel("下一词播报间隔(秒):")
         self.interval_input = QLineEdit("3")
         interval_row.addWidget(interval_label)
         interval_row.addWidget(self.interval_input)
         interval_row.addWidget(self.countdown)
         interval_row.addStretch(1)
         layout.addLayout(interval_row)
+
+        # 重复播报间隔设置
+        repeat_interval_row = QHBoxLayout()
+        repeat_interval_label = QLabel("重复播报间隔(秒):")
+        self.repeat_interval_input = QLineEdit("5")
+        repeat_interval_row.addWidget(repeat_interval_label)
+        repeat_interval_row.addWidget(self.repeat_interval_input)
+        repeat_interval_row.addStretch(1)
+        layout.addLayout(repeat_interval_row)
 
         # 字体大小调节
         font_size_row = QHBoxLayout()
@@ -299,8 +308,16 @@ class WordAnnouncer(QWidget):
         lesson = self.lesson_combo.currentText()
         words = self.lesson_words.get(lesson, [])
         if words:
-            self.text_area.setPlainText('\n'.join(words))
-            self.total_words = len(words)
+            # 去除重复词语，保持原有顺序
+            unique_words = []
+            seen = set()
+            for word in words:
+                if word not in seen:
+                    unique_words.append(word)
+                    seen.add(word)
+            
+            self.text_area.setPlainText('\n'.join(unique_words))
+            self.total_words = len(unique_words)
             self.update_progress_label()
 
     def on_start(self):
@@ -452,6 +469,11 @@ class WordAnnouncer(QWidget):
         except ValueError:
             interval = 10
 
+        try:
+            repeat_interval = float(self.repeat_interval_input.text())
+        except ValueError:
+            repeat_interval = 5
+
         words = self.text_area.toPlainText().strip().split('\n')
         words = [word for word in words if word.strip()]
 
@@ -478,7 +500,7 @@ class WordAnnouncer(QWidget):
                 if not self.is_playing:
                     break
                 self.say_text(word)
-                time.sleep(3)
+                time.sleep(repeat_interval)
             if self.is_playing:
                 # 启动倒计时控件（主线程）
                 finished = threading.Event()
