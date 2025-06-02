@@ -42,6 +42,51 @@ def get_embedded_icon():
     pixmap = QPixmap.fromImage(image)  # Create QPixmap from QImage
     return QIcon(pixmap)
 
+class CustomTextEdit(QTextEdit):
+    """自定义文本编辑器，支持拖拽Excel文件加载"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event):
+        """拖拽进入事件"""
+        if event.mimeData().hasUrls():
+            # 检查是否有Excel文件
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith(('.xlsx', '.xls')):
+                    event.acceptProposedAction()
+                    return
+        # 如果不是Excel文件，使用默认行为
+        super().dragEnterEvent(event)
+    
+    def dragMoveEvent(self, event):
+        """拖拽移动事件"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith(('.xlsx', '.xls')):
+                    event.acceptProposedAction()
+                    return
+        # 如果不是Excel文件，使用默认行为
+        super().dragMoveEvent(event)
+    
+    def dropEvent(self, event):
+        """拖拽放下事件"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith(('.xlsx', '.xls')):
+                    # 调用父窗口的加载Excel文件方法
+                    if self.parent_widget and hasattr(self.parent_widget, 'load_excel_file'):
+                        self.parent_widget.load_excel_file(file_path)
+                    event.acceptProposedAction()
+                    return
+        # 如果不是Excel文件，使用默认行为
+        super().dropEvent(event)
+
 class CircularCountdownWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -120,6 +165,9 @@ class WordAnnouncer(QWidget):
         self.lesson_words = {}  # 课名 -> 词语列表
         self.excel_loaded = False
         self.load_excel_words()
+        
+        # 启用拖拽功能
+        self.setAcceptDrops(True)
         self.init_ui()
 
         # 信号连接
@@ -167,9 +215,13 @@ class WordAnnouncer(QWidget):
         self.file_label = QLabel("当前Excel: words.xlsx")
         self.file_button = QPushButton("选择Excel文件")
         self.file_button.clicked.connect(self.on_choose_excel)
+        # 添加拖拽提示标签
+        self.drag_hint_label = QLabel("💡 提示：可直接拖拽Excel文件到窗口")
+        self.drag_hint_label.setStyleSheet("color: #666666; font-size: 12px; font-style: italic;")
         file_layout.addWidget(self.file_label)
         file_layout.addWidget(self.file_button)
         layout.addLayout(file_layout)
+        layout.addWidget(self.drag_hint_label)
 
         # 课选择
         self.lesson_combo = QComboBox()
@@ -225,7 +277,7 @@ class WordAnnouncer(QWidget):
         words_label_layout.addStretch(1)
         layout.addLayout(words_label_layout)
 
-        self.text_area = QTextEdit()
+        self.text_area = CustomTextEdit(self)
         # 设置文本区域的初始字体为正楷体
         font = self.text_area.font()
         font.setFamily("楷体")
@@ -257,7 +309,8 @@ class WordAnnouncer(QWidget):
 
         self.setLayout(layout)
 
-        self.setStyleSheet("""
+        # 保存原始样式，用于拖拽时恢复
+        self.original_style = """
             QWidget {
                 background: #f5f6fa;
             }
@@ -303,7 +356,8 @@ class WordAnnouncer(QWidget):
                 color: #aaaaaa;
                 border: 1px solid #cccccc;
             }
-        """)
+        """
+        self.setStyleSheet(self.original_style)
 
     def on_lesson_selected(self, idx):
         if idx <= 0:
@@ -379,13 +433,15 @@ class WordAnnouncer(QWidget):
         # 高亮当前词
         if index >= 0:
             lines = self.text_area.toPlainText().split('\n')
-            start = sum(len(l) + 1 for l in lines[:index])
-            length = len(lines[index])
-            cursor.setPosition(start)
-            cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, length)
-            fmt.setBackground(QColor(255, 255, 0))  # 黄色高亮
-            cursor.setCharFormat(fmt)
-            self.text_area.setTextCursor(cursor)
+            # 检查索引是否在有效范围内
+            if index < len(lines):
+                start = sum(len(l) + 1 for l in lines[:index])
+                length = len(lines[index])
+                cursor.setPosition(start)
+                cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor, length)
+                fmt.setBackground(QColor(255, 255, 0))  # 黄色高亮
+                cursor.setCharFormat(fmt)
+                self.text_area.setTextCursor(cursor)
         self.update_progress_label()
 
     def say_text(self, text):
@@ -399,17 +455,21 @@ class WordAnnouncer(QWidget):
             print("未知TTS引擎")
 
     def _say_text_edge(self, text):
-        """使用 edge-tts 合成并播放语音"""
+        """使用 edge-tts 合成并播放语音，超时时回退到pyttsx3"""
         def tts_and_play():
             try:
                 import asyncio
                 import edge_tts
                 mp3_path = f"_edge_tts_{uuid.uuid4().hex}.mp3"
                 rate = "-30%"  # 语速调慢，越负越慢，可根据需要调整
-                async def run():
+                
+                async def run_with_timeout():
                     communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate=rate)
                     await communicate.save(mp3_path)
-                asyncio.run(run())
+                
+                # 使用asyncio.wait_for设置超时
+                asyncio.run(asyncio.wait_for(run_with_timeout(), timeout=10.0))
+                
                 pygame.mixer.music.load(mp3_path)
                 pygame.mixer.music.play()
                 while pygame.mixer.music.get_busy():
@@ -419,19 +479,25 @@ class WordAnnouncer(QWidget):
                     os.remove(mp3_path)
                 except:
                     pass
+                    
+            except asyncio.TimeoutError:
+                print("edge-tts连接超时，回退到pyttsx3")
+                self._fallback_to_pyttsx3(text)
             except Exception as e:
-                print(f"edge-tts异常: {str(e)}")
+                print(f"edge-tts异常: {str(e)}，回退到pyttsx3")
+                self._fallback_to_pyttsx3(text)
         self.tts_thread = threading.Thread(target=tts_and_play)
         self.tts_thread.start()
 
     def _say_text_edge_direct(self, text):
-        """直接播放音频数据"""
+        """直接播放音频数据，超时时回退到pyttsx3"""
         def tts_and_play():
             try:
                 import asyncio
                 import edge_tts
                 
-                async def run():
+                async def run_with_timeout():
+                    # 设置超时时间为10秒
                     communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="-30%")
                     
                     audio_data = b""
@@ -447,12 +513,50 @@ class WordAnnouncer(QWidget):
                     sd.play(data, samplerate)
                     sd.wait()  # 等待播放完成
                 
-                asyncio.run(run())
+                # 使用asyncio.wait_for设置超时
+                asyncio.run(asyncio.wait_for(run_with_timeout(), timeout=10.0))
+                
+            except asyncio.TimeoutError:
+                print("edge-tts连接超时，回退到pyttsx3")
+                self._fallback_to_pyttsx3(text)
             except Exception as e:
-                print(f"edge-tts异常: {str(e)}")
+                print(f"edge-tts异常: {str(e)}，回退到pyttsx3")
+                self._fallback_to_pyttsx3(text)
         
         self.tts_thread = threading.Thread(target=tts_and_play)
         self.tts_thread.start()
+    
+    def _fallback_to_pyttsx3(self, text):
+        """回退到pyttsx3的方法"""
+        try:
+            import pyttsx3
+            engine = pyttsx3.init()
+            # 自动选择中文语音（Windows 下通常有 Microsoft Huihui/Microsoft Xiaoxiao）
+            voices = engine.getProperty('voices')
+            for v in voices:
+                # 兼容不同 pyttsx3 版本和平台
+                lang = ''
+                if hasattr(v, 'languages') and v.languages:
+                    # 有些 pyttsx3 版本是 bytes，有些是 str
+                    try:
+                        lang = v.languages[0]
+                        if isinstance(lang, bytes):
+                            lang = lang.decode('utf-8', errors='ignore')
+                    except Exception:
+                        lang = ''
+                if ('zh' in lang.lower()) or ('chinese' in v.name.lower()):
+                    engine.setProperty('voice', v.id)
+                    break
+            # 设置语速，数值越小越慢，100~150较为自然
+            engine.setProperty('rate', 130)  # 语速可调，推荐130左右
+            engine.setProperty('volume', 1.0)
+            engine.say(text)
+            engine.runAndWait()
+            engine.stop()
+        except ImportError:
+            print("未安装 pyttsx3，请先运行: pip install pyttsx3")
+        except Exception as e:
+            print(f"pyttsx3异常: {str(e)}")
 
     def _say_text_pyttsx3(self, text):
         """使用 pyttsx3 (离线) 合成并播放语音"""
@@ -553,27 +657,7 @@ class WordAnnouncer(QWidget):
     def on_choose_excel(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "选择Excel文件", "", "Excel Files (*.xlsx *.xls)")
         if file_path:
-            self.file_label.setText(f"当前Excel: {os.path.basename(file_path)}")
-            self.lesson_words = {}
-            self.excel_loaded = False
-            try:
-                df = pd.read_excel(file_path, header=None, engine='openpyxl')
-                for col in df:
-                    lesson = str(df[col][0]).strip()
-                    words = [str(x).strip() for x in df[col][1:] if pd.notna(x) and str(x).strip()]
-                    if lesson and words:
-                        self.lesson_words[lesson] = words
-                self.excel_loaded = True
-            except Exception as e:
-                print(f"读取Excel失败: {e}")
-                self.lesson_words = {}
-                self.excel_loaded = False
-            # 刷新下拉框
-            self.lesson_combo.clear()
-            self.lesson_combo.addItem("选择课文（可选）")
-            if self.excel_loaded:
-                for lesson in self.lesson_words:
-                    self.lesson_combo.addItem(lesson)
+            self.load_excel_file(file_path)
 
     def update_progress_label(self):
         current = self.current_word_index + 1 if self.current_word_index >= 0 else 0
@@ -607,6 +691,99 @@ class WordAnnouncer(QWidget):
                 line-height: 1.5;
             }}
         """)
+
+    def dragEnterEvent(self, event):
+        """拖拽进入事件"""
+        if event.mimeData().hasUrls():
+            # 检查是否有Excel文件
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith(('.xlsx', '.xls')):
+                    event.acceptProposedAction()
+                    # 添加视觉反馈
+                    self.setStyleSheet(self.styleSheet() + """
+                        QWidget {
+                            border: 2px dashed #4f8cff;
+                            background: #f0f8ff;
+                        }
+                    """)
+                    self.drag_hint_label.setText("📁 松开鼠标即可加载Excel文件")
+                    self.drag_hint_label.setStyleSheet("color: #4f8cff; font-size: 12px; font-weight: bold;")
+                    return
+        event.ignore()
+
+    def dragLeaveEvent(self, event):
+        """拖拽离开事件"""
+        # 恢复原始样式
+        self.setStyleSheet(self.original_style)
+        self.drag_hint_label.setText("💡 提示：可直接拖拽Excel文件到窗口")
+        self.drag_hint_label.setStyleSheet("color: #666666; font-size: 12px; font-style: italic;")
+
+    def dragMoveEvent(self, event):
+        """拖拽移动事件"""
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith(('.xlsx', '.xls')):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event):
+        """拖拽放下事件"""
+        # 恢复原始样式
+        self.setStyleSheet(self.original_style)
+        self.drag_hint_label.setText("💡 提示：可直接拖拽Excel文件到窗口")
+        self.drag_hint_label.setStyleSheet("color: #666666; font-size: 12px; font-style: italic;")
+        
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path.lower().endswith(('.xlsx', '.xls')):
+                    self.load_excel_file(file_path)
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def load_excel_file(self, file_path):
+        """加载Excel文件的通用方法"""
+        if not os.path.exists(file_path):
+            print(f"文件不存在: {file_path}")
+            return
+            
+        # 如果正在播放，先停止播放
+        if self.is_playing:
+            self.on_stop()
+            
+        self.file_label.setText(f"当前Excel: {os.path.basename(file_path)}")
+        self.lesson_words = {}
+        self.excel_loaded = False
+        
+        try:
+            df = pd.read_excel(file_path, header=None, engine='openpyxl')
+            for col in df:
+                lesson = str(df[col][0]).strip()
+                words = [str(x).strip() for x in df[col][1:] if pd.notna(x) and str(x).strip()]
+                if lesson and words:
+                    self.lesson_words[lesson] = words
+            self.excel_loaded = True
+            print(f"成功加载Excel文件: {os.path.basename(file_path)}")
+        except Exception as e:
+            print(f"读取Excel失败: {e}")
+            self.lesson_words = {}
+            self.excel_loaded = False
+            
+        # 重置播放状态
+        self.current_word_index = -1
+        self.total_words = 0
+        self.highlight_current_word(-1)
+        
+        # 刷新下拉框
+        self.lesson_combo.clear()
+        self.lesson_combo.addItem("选择课文（可选）")
+        if self.excel_loaded:
+            for lesson in self.lesson_words:
+                self.lesson_combo.addItem(lesson)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)  # 必须先创建 QApplication
